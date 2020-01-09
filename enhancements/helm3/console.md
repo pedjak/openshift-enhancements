@@ -4,6 +4,8 @@ Helm is a Kubernetes package manager.  Helm 3.0 is a major release of helm which
 
 Red hat Openshift wants to bring Helm based content support to Openshift 4.4 Developer Catalog along with Operators to strengthen the helm based ecosystem.
 
+![Developer Catalog](../helm3/assets/dev-catalog.png)
+
 ## Charts in the Developer Catalog
 
 The charts that would show up in the Developer Catalog will be powered by a [standard](https://helm.sh/docs/topics/chart_repository) helm charts' repository service.
@@ -16,9 +18,12 @@ In the short-term, we would ship one helm charts' repository service *backed* by
 
 1. The UI would invoke `/api/console/helm/charts/index.yaml` to populate the available charts in the developer catalog. 
 
-2. This endpoint would proxy the request to the in-cluster charts' repository service deployment.
+2. This endpoint would proxy the request to the in-cluster charts' repository service.
 
 Note: In the long-term, the service and/or the backing Git repository would be configurable per Openshift cluster, thereby supporting disconnected installs out-of-the-box. In other words, users will be able to BYOC ( Bring-your-own-charts ).
+
+![Helm Charts Repo Service](../helm3/assets/charts-repo.png)
+
 
 
 ## How would the UI install charts
@@ -33,3 +38,4 @@ Here's how the control flow would look like:
 This is in-line with the "Console is a pretty kubectl" philosophy since Helm itself is a thin layer on top of kubectl.
 
 
+![Helm Endpoints in Console Backend](../helm3/assets/helm-endpoints.png)
