@@ -18,12 +18,24 @@ In the short-term, we would ship one helm charts' repository service *backed* by
 
 1. The UI would invoke `/api/console/helm/charts/index.yaml` to populate the available charts in the developer catalog. 
 
-2. This endpoint would proxy the request to the in-cluster charts' repository service.
+2. This endpoint would proxy the request to the  charts' repository service, backed by a Github repository.
 
-Note: In the long-term, the service and/or the backing Git repository would be configurable per Openshift cluster, thereby supporting disconnected installs out-of-the-box. In other words, users will be able to BYOC ( Bring-your-own-charts ).
+In the initial phase, the charts repository service would be a served of a public Github repo.
+
+Example, 
+https://technosophos.github.io/tscharts/index.yaml is served directly off https://github.com/technosophos/tscharts . No in-cluster service will be used.
+
+The "Red Hat" public repository that would be used is https://github.com/redhat-developer/redhat-helm-charts ( work-in-progress )
 
 ![Helm Charts Repo Service](../helm3/assets/charts-repo.png)
 
+## How would disconnected installs work 
+
+1. The user would need to 'clone' the public Github repository into her inside-the-network Github or Gitlab instance, and configure the same to serve static content ( "Pages" ).
+
+2. The URL serving the above static content would need to be configured in the cluster's Console Settings. The value would be propagated to the console backend through an environment variable.
+
+![Helm Charts Repo Service](../helm3/assets/image-console-config.png)
 
 
 ## How would the UI install charts
