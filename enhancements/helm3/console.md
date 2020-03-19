@@ -1,4 +1,32 @@
+---
+title: helm-charts-in-developer-catalog
+authors:
+  - "@sbose78"
+  - "@pedjak"
+reviewers:
+  - TBD
+approvers:
+  - TBD
+creation-date: 2020-01-09
+last-updated: 2020-03-19
+status: implementable
+---
+
 # Helm Charts in the Developer Catalog
+
+## Release Signoff Checklist
+
+- [ ] Enhancement is `implementable`
+- [ ] Design details are appropriately documented from clear requirements
+- [ ] Test plan is defined
+- [ ] Graduation criteria for dev preview, tech preview, GA
+- [ ] User-facing documentation is created in [openshift-docs](https://github.com/openshift/openshift-docs/)
+
+## Summary
+
+Managing Helm charts using the Developer perspective from DevConsole
+
+## Motivation
 
 Helm is a Kubernetes package manager.  Helm 3.0 is a major release of helm which brings in a rich set of features and addresses major security concerns around tiller.  
 
@@ -6,37 +34,102 @@ Red hat Openshift wants to bring Helm based content support to Openshift 4.4 Dev
 
 ![Developer Catalog](../helm3/assets/dev-catalog.png)
 
-## Charts in the Developer Catalog
+### Goals
+
+* Provide RESTful API for managing Helm charts and releases
+* Support disconnected installs
+* Support easy management of available charts, aggregation from multiple sources and filtering
+  
+### Non-Goals
+
+* Infrastructure for serving the default chart repository
+* Process for curating charts within the default chart repository
+  
+## Proposal
+  
+### Charts in the Developer Catalog
 
 The charts that would show up in the Developer Catalog will be powered by a [standard](https://helm.sh/docs/topics/chart_repository) helm charts' repository service.
 
-The 'data' in the service will be backed by a Github repository of helm charts.
+The default chart repository will be served from [Red Hat public GitHub repository](https://github.com/redhat-developer/redhat-helm-charts).
 
-In the short-term, we would ship one helm charts' repository service *backed* by one public Github repository.
+New charts will be added or existing curated by submitting PRs against the above GitHub repo.
 
-## How would the UI discover the charts
+### How would the UI discover the charts
 
-1. The UI would invoke `/api/console/helm/charts/index.yaml` to populate the available charts in the developer catalog. 
+1. The UI would invoke `/api/helm/charts/index.yaml` endpoint to get [the list of all available charts](https://helm.sh/docs/topics/chart_repository/#the-index-file) so that the available charts can be rendered in the developer catalog. 
 
-2. This endpoint would proxy the request to the  charts' repository service, backed by a Github repository.
+2. The above endpoint would proxy requests to the configured charts repository
 
-In the initial phase, the charts repository service would be a served of a public Github repo.
-
-Example, 
-https://technosophos.github.io/tscharts/index.yaml is served directly off https://github.com/technosophos/tscharts . No in-cluster service will be used.
-
-The "Red Hat" public repository that would be used is https://github.com/redhat-developer/redhat-helm-charts ( work-in-progress )
+In the initial phase, the charts repository would be a served of [redhat-helm-charts](https://redhat-developer.github.io/redhat-helm-charts) public GitHub repo.
 
 ![Helm Charts Repo Service](../helm3/assets/charts-repo.png)
 
-## How would disconnected installs work 
+### How would disconnected installs work 
 
-1. The user would need to 'clone' the public Github repository into her inside-the-network Github or Gitlab instance, and configure the same to serve static content ( "Pages" ).
+1. The user would need to 'clone' the content of the chart repository over the fence
 
-2. The URL serving the above static content would need to be configured in the cluster's Console Settings. The value would be propagated to the console backend through an environment variable.
+   * The public GitHub repository could be cloned into inside-the-network GitHub or Gitlab instance and configured to serve static content ( "Pages" ).
+   * The content of the chart repository could be crawled and served using a (containerized or external) HTTP server, e.g. nginx
 
-![Helm Charts Repo Service](../helm3/assets/image-console-config.png)
+2. The URL serving the above static content would need to be passed to chart repository proxy running inside the cluster. 
 
+### Configuring Helm Chart Repository location
+
+Configuring Helm repository location could be modeled similar to [`OperatorSource`](https://github.com/operator-framework/operator-marketplace/blob/7d230952a1045624b7601b4d6e1d45b3def4cf76/deploy/crds/operators_v1_operatorsource_crd.yaml). The resource would need to contain the following field:
+
+```yaml
+url: http://my.chart-repo.org/stable
+
+# optional and only needed for UI purposes
+displayName: myChartRepo
+
+# optional and only needed for UI purposes
+description: my private chart repo
+
+# set to true if need to be disabled temporarly
+disabled: true
+```
+
+Due to future federated usecases ([ODC-2994](https://issues.redhat.com/browse/ODC-2994))), a cluster admin should be able to declare multiple chart repositories.
+Such list could be embedded (cluster-wide, top-level `Helm` resource)[https://github.com/openshift/api/tree/master/config/v1]:
+
+```yaml
+apiVersion: config.openshift.io/v1
+kind: Helm
+metadata:
+  name: cluster
+spec:
+  chartRepositories:
+    - url: http://my.chart-repo.org/stable
+      displayName: myChartRepo
+      description: my private chart repo
+
+
+```
+
+The console operator would watch for changes on it and reconfigure the chart repository proxy. The console backend already implements a few helm endpoints (including the chart proxy), but the future might require to extract them into a separate service (e.g. to make openshift more modular). Hence, it would be good to define the configuration as the top-level resource detaching API from the implementation. Cluster admin would easily discover the new resource and manage it either via CLI or through UI. 
+
+![Helm Cluster Configuration](assets/openshift-administration-cluster-settings.png)
+
+#### Alternatives
+
+1. The configuration could be embedded into cluster-wide [`Console` config](https://github.com/openshift/api/blob/master/config/v1/types_console.go#L26)
+
+Such approach would hide a bit the configuration, and make its discovery by admins harder. It becomes closely coupled with the console. Extracting Helm endpoints into a separate service would require moving the config as well.
+
+2. The configuration could be embedded into [`Console` operator config](https://github.com/openshift/api/blob/master/operator/v1/types_console.go#L26)
+
+Such approach shares the similar issues with the previous alternative. Discovering the config by cluster admins is even harder, it would live in `openshift-console-operator` namespace.
+
+3. OLM operator for Helm endpoints. Helm configuration would move to the top-level resource inside `openshift-helm` namespace, along with the service implementing the endpoints.
+
+This might be an attractive approach for the future, but today it would significantly impact user experience. It is not possible to add OLM Helm operators during the Openshift installation. Hence, a developer would see no charts available:
+
+
+![No Charts Available Without OLM Helm operator installed](assets/olm-no-charts.png)
+
+And for she/he is not obvious that OLM Helm operator needs to be installed.
 
 ## How would the UI install charts
 
@@ -44,8 +137,8 @@ New endpoints in Console Backend that leverage the same Helm Golang APIs which t
 
 Here's how the control flow would look like:
 
-1. The Console UI will invoke the `/api/console/helm/install` endpoint on the Console Backend. 
-2. The API handler for `/api/console/helm/install` will, in turn talk to the API server ( no tiller! ) using the user's authentication, while leveraging the Helm Golang API.
+1. The Console UI will create `POST` request containing appropriate JSON payload against `/api/helm/release` endpoint on the Console Backend. 
+2. The API handler for the given endpoint will, in turn talk to the API server (no Tiller in Helm3) using the user's authentication, while leveraging the Helm Golang API.
 
 This is in-line with the "Console is a pretty kubectl" philosophy since Helm itself is a thin layer on top of kubectl.
 
