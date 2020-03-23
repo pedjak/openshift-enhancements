@@ -116,7 +116,7 @@ The console operator would watch for changes on it and reconfigure the chart rep
 
 1. The configuration could be embedded into cluster-wide [`Console` config](https://github.com/openshift/api/blob/master/config/v1/types_console.go#L26)
 
-Such approach would hide a bit the configuration, and make its discovery by admins harder. It becomes closely coupled with the console. Extracting Helm endpoints into a separate service would require moving the config as well.
+Admins wouldn't be able to intuitively discover the operator config as a way to configure the Helm repository URLs. It becomes closely coupled with the console. Extracting Helm endpoints into a separate service would require moving the config as well.
 
 2. The configuration could be embedded into [`Console` operator config](https://github.com/openshift/api/blob/master/operator/v1/types_console.go#L26)
 
@@ -126,7 +126,6 @@ This approach would have similar issues with the previous alternative - admins w
 3. OLM operator for Helm Configuration. 
 
 Note, the helm charts' repository configuration today exists as a console configuration, which enables Console to proxy to the Helm chart repository URL. Moving it out of Console is outside the scope of this section. 
-
 
    * The default helm chart repository URL remains unchanged in the Console configuration.
    * We create an OLM operator which only provides a `HelmConfig` cluster-scoped CRD
