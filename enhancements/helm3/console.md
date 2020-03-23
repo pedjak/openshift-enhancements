@@ -120,16 +120,18 @@ Such approach would hide a bit the configuration, and make its discovery by admi
 
 2. The configuration could be embedded into [`Console` operator config](https://github.com/openshift/api/blob/master/operator/v1/types_console.go#L26)
 
-Such approach shares the similar issues with the previous alternative. Discovering the config by cluster admins is even harder, it would live in `openshift-console-operator` namespace.
+Conceptually, the Helm repository URL isn't really an operator configuration, hence this doesn't feel like the right place.
+This approach would have similar issues with the previous alternative - admins wouldn't be able to intuitively discover the operator config as a way to configure the Helm repository URLs.
 
-3. OLM operator for Helm endpoints. Helm configuration would move to the top-level resource inside `openshift-helm` namespace, along with the service implementing the endpoints.
+3. OLM operator for Helm Configuration. 
 
-This might be an attractive approach for the future, but today it would significantly impact user experience. It is not possible to add OLM Helm operators during the Openshift installation. Hence, a developer would see no charts available:
+Note, the helm charts' repository configuration today exists as a console configuration, which enables Console to proxy to the Helm chart repository URL. Moving it out of Console is outside the scope of this section. 
 
 
-![No Charts Available Without OLM Helm operator installed](assets/olm-no-charts.png)
-
-And for she/he is not obvious that OLM Helm operator needs to be installed.
+   * The default helm chart repository URL remains unchanged in the Console configuration.
+   * We create an OLM operator which only provides a `HelmConfig` cluster-scoped CRD
+   * Admin installs the operator and creates a cluster-scoped CR. This isn't very intuitive for the Admin.
+   * Console-operator watches the new `HelmConfig` CR and reconciles.
 
 ## How would the UI install charts
 
