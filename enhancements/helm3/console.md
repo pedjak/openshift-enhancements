@@ -136,6 +136,7 @@ Reflections on this approach:
 * We get to avoid changes to `openshift/api`.
 * However, Console operator would have to watch the `HelmConfig` CRD which it doesn't own.
 * Creation of the cluster-scoped `HelmConfig` CR may not be very intuitive for the admin unless we show it in the Cluster Configuration UI in Console.
+* Ideally, the operator should have been pre-installed in the cluster, but that isn't supported.
 
 ## How would the UI install charts
 
