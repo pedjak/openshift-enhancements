@@ -76,36 +76,27 @@ In the initial phase, the charts repository would be a served of [redhat-helm-ch
 
 ### Configuring Helm Chart Repository location
 
-Configuring Helm repository location could be modeled similar to [`OperatorSource`](https://github.com/operator-framework/operator-marketplace/blob/7d230952a1045624b7601b4d6e1d45b3def4cf76/deploy/crds/operators_v1_operatorsource_crd.yaml). The resource would need to contain the following field:
-
-```yaml
-url: http://my.chart-repo.org/stable
-
-# optional and only needed for UI purposes
-displayName: myChartRepo
-
-# optional and only needed for UI purposes
-description: my private chart repo
-
-# set to true if need to be disabled temporarly
-disabled: true
-```
-
+Configuring Helm repository location could be modeled similar to [`OperatorSource`](https://github.com/operator-framework/operator-marketplace/blob/7d230952a1045624b7601b4d6e1d45b3def4cf76/deploy/crds/operators_v1_operatorsource_crd.yaml). 
 Due to future federated usecases ([ODC-2994](https://issues.redhat.com/browse/ODC-2994))), a cluster admin should be able to declare multiple chart repositories.
-Such list could be embedded (cluster-wide, top-level `Helm` resource)[https://github.com/openshift/api/tree/master/config/v1]:
+
+A cluster-scoped, top-level `HelmRepository` resource)[https://github.com/openshift/api/tree/master/config/v1] should be added:
 
 ```yaml
 apiVersion: config.openshift.io/v1
-kind: Helm
+kind: HelmRepository
 metadata:
   name: cluster
 spec:
-  chartRepositories:
-    - url: http://my.chart-repo.org/stable
-      displayName: myChartRepo
-      description: my private chart repo
+  url: http://my.chart-repo.org/stable
 
+  # optional and only needed for UI purposes
+  displayName: myChartRepo
 
+  # optional and only needed for UI purposes
+  description: my private chart repo
+
+  # set to true if need to be disabled temporarly
+  disabled: true
 ```
 
 The console operator would watch for changes on it and reconfigure the chart repository proxy. The console backend already implements a few helm endpoints (including the chart proxy), but the future might require to extract them into a separate service (e.g. to make openshift more modular). Hence, it would be good to define the configuration as the top-level resource detaching API from the implementation. Cluster admin would easily discover the new resource and manage it either via CLI or through UI. 
