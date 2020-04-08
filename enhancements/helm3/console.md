@@ -6,9 +6,12 @@ authors:
 reviewers:
   - TBD
 approvers:
-  - TBD
+  - "@deads2k"
+  - "@spadgett"
+  - "@bparees"
+  - "@derekwaynecarr"
 creation-date: 2020-01-09
-last-updated: 2020-03-19
+last-updated: 2020-04-08
 status: implementable
 ---
 
@@ -131,14 +134,14 @@ Reflections on this approach:
 
 ## How would the UI install charts
 
-New endpoints in Console Backend that leverage the same Helm Golang APIs which the `helm install` command uses to install charts, will be introduced.
+An endpoint that leverages the same Helm Golang APIs which the `helm install` command uses to install charts, will be introduced.
 
 Here's how the control flow would look like:
 
-1. The Console UI will create `POST` request containing appropriate JSON payload against `/api/helm/release` endpoint on the Console Backend. 
+1. The Console UI will create `POST` request containing appropriate JSON payload against `/api/helm/release` endpoint. 
 2. The API handler for the given endpoint will, in turn talk to the API server (no Tiller in Helm3) using the user's authentication, while leveraging the Helm Golang API.
 
 This is in-line with the "Console is a pretty kubectl" philosophy since Helm itself is a thin layer on top of kubectl.
 
 
-![Helm Endpoints in Console Backend](../helm3/assets/helm-endpoints.png)
+![Helm Endpoints in Console Backend](../helm3/assets/helm-endpoints.svg)
