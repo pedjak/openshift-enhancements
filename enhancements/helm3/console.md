@@ -11,7 +11,7 @@ approvers:
   - "@bparees"
   - "@derekwaynecarr"
 creation-date: 2020-01-09
-last-updated: 2020-04-08
+last-updated: 2020-04-15
 status: implementable
 ---
 
@@ -52,19 +52,18 @@ Red hat Openshift wants to bring Helm based content support to Openshift 4.4 Dev
   
 ### Charts in the Developer Catalog
 
-The charts that would show up in the Developer Catalog will be powered by a [standard](https://helm.sh/docs/topics/chart_repository) helm charts' repository service.
+The charts that would show up in the Developer Catalog will be powered by a [standard](https://helm.sh/docs/topics/chart_repository) Helm chart repository instance.
 
-The default chart repository will be served from [Red Hat public GitHub repository](https://github.com/redhat-developer/redhat-helm-charts).
+In the initial phase, the chart repository would be a served of [redhat-helm-charts](https://redhat-developer.github.io/redhat-helm-charts) public [GitHub repository](https://github.com/redhat-developer/redhat-helm-charts).
 
-New charts will be added or existing curated by submitting PRs against the above GitHub repo.
+New charts will be added and/or existing curated by submitting PRs against the above mentioned GitHub repository.
 
 ### How would the UI discover the charts
 
-1. The UI would invoke `/api/helm/charts/index.yaml` endpoint to get [the list of all available charts](https://helm.sh/docs/topics/chart_repository/#the-index-file) so that the available charts can be rendered in the developer catalog. 
+1. The UI would invoke `/api/helm/charts/index.yaml` endpoint to get [the repository index file](https://helm.sh/docs/topics/chart_repository/#the-index-file) so that the available charts can be rendered in the developer catalog. 
 
-2. The above endpoint would proxy requests to the configured charts repository
+2. The above endpoint would proxy requests to the configured chart repository
 
-In the initial phase, the charts repository would be a served of [redhat-helm-charts](https://redhat-developer.github.io/redhat-helm-charts) public GitHub repo.
 
 ![Helm Charts Repo Service](../helm3/assets/charts-repo.png)
 
@@ -80,13 +79,13 @@ In the initial phase, the charts repository would be a served of [redhat-helm-ch
 ### Configuring Helm Chart Repository location
 
 Configuring Helm repository location could be modeled similar to [`OperatorSource`](https://github.com/operator-framework/operator-marketplace/blob/7d230952a1045624b7601b4d6e1d45b3def4cf76/deploy/crds/operators_v1_operatorsource_crd.yaml). 
-Due to future federated usecases ([ODC-2994](https://issues.redhat.com/browse/ODC-2994))), a cluster admin should be able to declare multiple chart repositories.
+Due to future planned federated usecases ([ODC-2994](https://issues.redhat.com/browse/ODC-2994)), a cluster admin should be able to declare multiple chart repositories.
 
-A cluster-scoped, top-level `HelmRepository` resource)[https://github.com/openshift/api/tree/master/config/v1] should be added:
+To achieve that, one or more cluster-scoped, top-level `HelmChartRepository` resources should be added:
 
 ```yaml
-apiVersion: config.openshift.io/v1
-kind: HelmRepository
+apiVersion: helm.kubernetes.io/v1
+kind: HelmChartRepository
 metadata:
   name: cluster
 spec:
@@ -102,9 +101,90 @@ spec:
   disabled: true
 ```
 
-The console operator would watch for changes on it and reconfigure the chart repository proxy. The console backend already implements a few helm endpoints (including the chart proxy), but the future might require to extract them into a separate service (e.g. to make openshift more modular). Hence, it would be good to define the configuration as the top-level resource detaching API from the implementation. Cluster admin would easily discover the new resource and manage it either via CLI or through UI. 
+An operator would watch for changes on them and reconfigure the chart repository proxy. 
+
+---
+**NOTE**
+
+The console backend already implements a few helm endpoints (including the chart proxy), but the future might require to extract them into a separate service (e.g. to make openshift more modular). 
+
+---
+
+Hence, it would be good to define the configuration as the top-level resource detaching API from the implementation. Cluster admin would easily discover the new resource and manage it either through UI. 
 
 ![Helm Cluster Configuration](assets/openshift-administration-cluster-settings.png)
+
+or via CLI:
+
+```shell
+$ oc get helmchartrepository
+NAME          AGE
+cluster       3h30m
+```
+
+In a case of multiple chart repositories, the console should be modified so that either allow:
+* editing all chart repository instances at once through aggregated YAML document
+* add/edit/removal of individual instances
+
+
+Adding an additional chart repositories via CLI follows the usual k8s pattern:
+
+```shell
+$ cat <<EOF | oc apply -f -
+apiVersion: helm.kubernetes.io/v1
+kind: HelmChartRepository
+metadata:
+  name: stable
+spec:
+  url: https://kubernetes-charts.storage.googleapis.com
+
+  displayName: Public Helm stable charts
+
+  description: Public Helm stable charts hosted on HelmHub
+---
+apiVersion: helm.kubernetes.io/v1
+kind: HelmChartRepository
+metadata:
+  name: incubator
+spec:
+  url: https://kubernetes-charts-incubator.storage.googleapis.com
+
+  displayName: Public Helm charts in incubator state
+EOF 
+
+$ oc get helmchartrepository
+NAME          AGE
+cluster       3h30m
+stable        1m
+incubator     1m
+```
+
+Chart repository proxy will use all configured chart repositories and deliver to the UI an aggregated index file. If needed by some future usecase, UI would be able read helm chart repository configuration and perhaps even talk to the individual chart repositories directly.
+
+Managing Helm releases via CLI could also benefit from the in-cluster stored chart repository configurations. If
+`HelmChartRepository` CRD includes all the fields from [Helm Repository Entry struct](https://github.com/helm/helm/blob/master/pkg/repo/chartrepo.go#L42), then the repositories declared in the cluster could be automatically used, without the need to issue `helm repo add` locally. These repositories will be shared across all developers accessing the cluster.
+
+Given the above example, the interaction could look like this:
+
+```shell
+$ oc get helmchartrepository
+NAME          AGE
+cluster       3h30m
+stable        1m
+incubator     1m
+
+# repositories configured in the cluster are implicitelly available for CLI as well
+$ helm repo list
+NAME     	URL
+cluster   http://my.chart-repo.org/stable
+stable   	https://kubernetes-charts.storage.googleapis.com           
+incubator	https://kubernetes-charts-incubator.storage.googleapis.com
+
+# install a chart from stable repo defined in the cluster
+$ helm install mysql stable/mysql
+```
+
+Currently Helm manages chart repository configurations in the local file only and the previously mentioned integration would require a contribution to the upstream. 
 
 #### Alternatives
 
@@ -119,17 +199,17 @@ This approach would have similar issues with the previous alternative - admins w
 
 #### 3. OLM operator for Helm Configuration. 
 
-Note, the helm charts' repository configuration today exists as a console configuration, which enables Console to proxy to the Helm chart repository URL. Moving it out of Console is outside the scope of this section. 
+Note, the Helm chart repository configuration today exists as a console configuration, which enables Console to proxy to the Helm chart repository URL. Moving it out of Console is outside the scope of this section. 
 
    * The default helm chart repository URL remains unchanged in the Console configuration.
-   * Admin installs an OLM operator which only provides a `HelmConfig` cluster-scoped CRD
+   * Admin installs an OLM operator which only provides a `HelmChartRepository` cluster-scoped CRD
    * Admin creates a cluster-scoped CR. Note, this isn't very intuitive for the Admin.
-   * Console-operator watches the new `HelmConfig` CR and reconciles.
+   * Console-operator watches the new `HelmChartRepository` CR and reconciles.
    
 Reflections on this approach:
 * We get to avoid changes to `openshift/api`.
-* However, Console operator would have to watch the `HelmConfig` CRD which it doesn't own.
-* Creation of the cluster-scoped `HelmConfig` CR may not be very intuitive for the admin unless we show it in the Cluster Configuration UI in Console.
+* However, Console operator would have to watch the `HelmChartRepository` CRD which it doesn't own.
+* Creation of the cluster-scoped `HelmChartRepository` CR may not be very intuitive for the admin unless we show it in the Cluster Configuration UI in Console.
 * Ideally, the operator should have been pre-installed in the cluster, but that isn't supported.
 
 ## How would the UI install charts
