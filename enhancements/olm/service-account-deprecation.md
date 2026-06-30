@@ -7,7 +7,7 @@ reviewers:
 approvers:
   - "@joelanford"
 api-approvers:
-  - "@everettraven"
+  - "@JoelSpeed"
 creation-date: 2025-10-08
 last-updated: 2026-06-19
 tracking-link:
@@ -38,7 +38,7 @@ where users with `ClusterExtension` write access are effectively delegated clust
 The `spec.serviceAccount` field was originally introduced to enforce least-privilege by
 requiring per-extension ServiceAccounts with fine-grained RBAC, but in practice this model
 provides a false sense of security while imposing significant UX complexity and code
-maintenance burden. This proposal removes the requirement, simplifies the controller
+maintenance burden. This proposal removes the requirement and simplifies the controller
 architecture. Access control shifts from per-extension ServiceAccount RBAC to standard
 Kubernetes RBAC on who can create `ClusterExtension` resources. A
 [ValidatingAdmissionPolicy][k8s-vap]
@@ -80,6 +80,11 @@ Telemetry data from approximately 199,000 clusters reporting to Red Hat shows th
 across the fleet. Of those 59 clusters, 17 are registered as production in OpenShift
 Cluster Manager, and only 6 can be confirmed as genuine customer production environments
 (across 5 organizations, totaling 11 ClusterExtensions).
+<!-- TODO: Add customer impact statement from @dmesser -->
+
+Additionally, the cluster-admin scope enables future UX improvements such as automatic
+namespace creation on behalf of extensions, eliminating the requirement for cluster admins
+to pre-create installation namespaces.
 
 ### User Stories
 
@@ -108,8 +113,9 @@ what values are permitted, without requiring per-extension ServiceAccounts.
   to create, maintain, or derive ServiceAccount RBAC to install extensions.
 - Preserve backward compatibility — existing ClusterExtensions with `spec.serviceAccount` set
   continue to function after upgrade without any user action.
-- Remove the per-ServiceAccount infrastructure (alpha feature gates, impersonation code,
-  per-extension caches) to simplify the controller architecture.
+- Remove the per-ServiceAccount infrastructure (alpha feature gates `PreflightPermissions`
+  and `SyntheticPermissions`, impersonation code, per-extension caches) to simplify the
+  controller architecture.
 - Provide documentation and examples for using RBAC and ValidatingAdmissionPolicy to control
   access to ClusterExtension writes as a replacement for per-SA scoping.
 
@@ -120,6 +126,8 @@ what values are permitted, without requiring per-extension ServiceAccounts.
   removal is deferred pending architectural guidance on stable API field removal.
 - Building new permission-requesting or permission-derivation systems to replace
   per-ServiceAccount scoping.
+- Console/UI changes to remove the ServiceAccount field from ClusterExtension workflows
+  (tracked separately).
 
 ## Proposal
 
@@ -138,7 +146,7 @@ what values are permitted, without requiring per-extension ServiceAccounts.
 
 #### Workflow 2: Existing ClusterExtension with ServiceAccount (upgrade path)
 
-1. The cluster admin upgrades OLMv1 to OCP 5.0.
+1. The cluster admin upgrades OLMv1 to the deprecation release.
 2. During upgrade, `cluster-olm-operator` deploys the new operator-controller manifests.
    Because the ClusterRoleBinding's `roleRef` is [immutable in Kubernetes][k8s-rbac-crb], the
    binding cannot be updated in-place from the old custom ClusterRole to `cluster-admin`. Instead,
@@ -161,10 +169,31 @@ what values are permitted, without requiring per-extension ServiceAccounts.
 2. This replaces per-ServiceAccount scoping with standard Kubernetes access control mechanisms.
    The security boundary is who can write ClusterExtension resources, not which ServiceAccount
    is referenced.
-3. Future documentation will
-   provide examples for common delegation scenarios, including optional use of
+3. Documentation and examples for common delegation scenarios are provided as part of
+   this EP's deliverables ([OPRUN-4674][]), including optional use of
    ValidatingAdmissionPolicies to further restrict allowed values (e.g., package names,
    catalog sources, installation namespaces).
+
+#### Default RBAC and delegation model
+
+By default, only cluster-admins have write access to `ClusterExtension` and
+`ClusterObjectSet` resources — there is no delegation and no ClusterRole aggregation out of
+the box. This EP does not change the default RBAC. The cluster-admin grant to the
+operator-controller is safe precisely because the only users who can create
+ClusterExtensions already have cluster-admin equivalent trust.
+
+When a cluster admin wants to delegate ClusterExtension management to non-admin users, two
+mechanisms are required together:
+
+- **RBAC** opens the authorization gate so the user can create/update ClusterExtension
+  resources. RBAC alone is dangerous because ClusterExtension write access is
+  cluster-admin-equivalent — the user could install any extension from any catalog.
+- **ValidatingAdmissionPolicy** restricts *what* a user can do with ClusterExtensions (e.g.,
+  restrict by package name, catalog source, target namespace). VAP alone has no effect
+  because users still lack permission to touch ClusterExtensions at all.
+
+Neither mechanism is sufficient alone. The documentation deliverable ([OPRUN-4674][])
+covers common delegation patterns with examples.
 
 ### API Extensions
 
@@ -297,6 +326,28 @@ spec:
       version: "0.6.0"
 ```
 
+### Topology Considerations
+
+#### Hypershift / Hosted Control Planes
+
+No topology-specific impact. The operator-controller runs in the guest cluster
+and the cluster-admin model applies uniformly.
+
+#### Standalone Clusters
+
+Primary deployment target. All changes apply as described.
+
+#### Single-node Deployments or MicroShift
+
+No additional impact. The removal of per-SA caches reduces memory consumption,
+which benefits resource-constrained environments.
+
+#### OpenShift Kubernetes Engine
+
+No dependencies on features excluded from OKE.
+
+### Implementation Details/Notes/Constraints
+
 #### RBAC changes
 
 The operator-controller's ClusterRoleBinding is renamed from
@@ -307,7 +358,7 @@ built-in `cluster-admin` ClusterRole.
 The ClusterRoleBinding was renamed (not updated in-place) because
 [`roleRef` is immutable][k8s-rbac-crb]
 in Kubernetes ClusterRoleBindings. The old ClusterRoleBinding and custom ClusterRole are
-cleaned up by `cluster-olm-operator` during the OCP 5.0 upgrade.
+cleaned up by `cluster-olm-operator` during the upgrade.
 
 #### Controller logic changes
 
@@ -324,7 +375,8 @@ per-extension clients or manages per-extension credentials.
 The per-ClusterExtension/ServiceAccount scoped informer caches are replaced with a single
 shared cache from the [boxcutter][boxcutter] project. The shared cache tracks managed resource
 types per ClusterExtension rather than per ServiceAccount, reducing memory consumption and
-simplifying the cache lifecycle.
+simplifying the cache lifecycle. When the boxcutter feature gate is enabled,
+`ClusterObjectSet` resources also use the operator-controller's cluster-admin ServiceAccount.
 
 #### Downstream deprecation tracking
 
@@ -335,12 +387,12 @@ incompatible with the next OpenShift version.
 
 The same mechanism is used for deprecation tracking in two phases:
 
-**Phase 1 (OCP 5.0, deprecation release):** `cluster-olm-operator` detects ClusterExtensions
+**Phase 1 (deprecation release):** `cluster-olm-operator` detects ClusterExtensions
 that still have `spec.serviceAccount` set and reports `EvaluationConditionsDetected=True`. This
 is advisory — it surfaces the deprecation in the ClusterOperator status but does not block
 upgrades.
 
-**Phase 2 (OCP 5.2 or later, pre-removal release):** The condition switches to
+**Phase 2 (pre-removal release):** The condition switches to
 `Upgradeable=False`, blocking the upgrade to the release that would remove the field. Cluster
 admins must clear `spec.serviceAccount` from all ClusterExtensions before upgrading.
 
@@ -360,8 +412,8 @@ The real security boundary is who can create ClusterExtension resources. Cluster
 treat ClusterExtension write access as equivalent to cluster-admin delegation. Catalogs provide
 a curation layer: admins choose which catalogs to install and can restrict to vetted sources
 (Red Hat certified, marketplace). Future OCI signing and provenance verification can add
-supply-chain trust. Additional access control via RBAC and custom ValidatingAdmissionPolicies
-will be documented as guidance, not  implemented by this proposal.
+supply-chain trust. Documentation for access control via RBAC and custom
+ValidatingAdmissionPolicies is a deliverable of this EP ([OPRUN-4674][]).
 
 #### Risk: Loss of permission-change signal on upgrades
 
@@ -431,7 +483,7 @@ standard Kubernetes API conventions.
 2. **RBAC + VAP documentation scope.** How detailed should the RBAC and ValidatingAdmissionPolicy
    examples be in this EP versus in separate documentation?
 
-## Alternatives
+## Alternatives (Not Implemented)
 
 ### Keep ServiceAccount functional during the deprecation period
 
@@ -461,7 +513,9 @@ they have access to, regardless of which tier is chosen. Building better UX arou
 fundamentally flawed security model does not solve the core problem.
 
 JoelSpeed also noted: "I don't think we can do this until we have something new to point
-users to that replaces this." The replacement is standard Kubernetes RBAC and ValidationAdmissionPolicy for access control.
+users to that replaces this." The replacement is standard Kubernetes RBAC and
+ValidatingAdmissionPolicy for access control, documented as part of this EP's deliverables
+([OPRUN-4674][]).
 
 ### Better client tooling for ServiceAccount derivation
 
@@ -522,25 +576,37 @@ removed — is outside the scope of this mechanism.
   different non-empty value.
 - Upgrade test: existing ClusterExtensions with `spec.serviceAccount` set continue to
   function after upgrading operator-controller.
+- `cluster-olm-operator` reports `EvaluationConditionsDetected=True` when any
+  ClusterExtension has `spec.serviceAccount` set.
 
 ## Graduation Criteria
 
-### Removing a Deprecated Feature
+### Dev Preview -> Tech Preview
 
-**OCP 5.0 (deprecation release — this EP):**
+N/A. The `spec.serviceAccount` field is a GA feature being deprecated, not a new feature
+progressing through maturity stages.
+
+### Tech Preview -> GA
+
+N/A. See above.
+
+### Removing a deprecated feature
+
+**Deprecation release (this EP):**
 - `spec.serviceAccount` becomes optional (removed from the `required` list in the CRD).
 - ValidatingAdmissionPolicy emits a warning on create/update when the field is set.
 - Controller logs a deprecation INFO message during reconciliation.
 - Controller ignores the field — uses its own cluster-admin ServiceAccount for all interactions.
-- All SA impersonation, authentication, authorization, and synthetic permissions code removed.
+- All SA impersonation, authentication, authorization, and synthetic permissions code removed,
+  including the `PreflightPermissions` and `SyntheticPermissions` feature gates.
 - `cluster-olm-operator` sets `EvaluationConditionsDetected=True` with reason
   `DeprecatedServiceAccountInUse` when any ClusterExtension has the field set. This is advisory
   and does not block upgrades.
 
-**OCP 5.1+ (monitoring period):**
+**Following release (monitoring period):**
 - Field remains in the API, deprecated and ignored.
 
-**OCP 5.2+ (potential upgrade blocker):**
+**Subsequent release (potential upgrade blocker):**
 - `cluster-olm-operator` switches to `Upgradeable=False` with reason
   `DeprecatedServiceAccountMustBeCleared` when any ClusterExtension has the field set.
   This blocks upgrade to the release that would remove the field, forcing cluster admins to
@@ -552,9 +618,9 @@ removed — is outside the scope of this mechanism.
 
 ## Upgrade / Downgrade Strategy
 
-### Upgrading to OCP 5.0 (deprecation release)
+### Upgrading to the deprecation release
 
-During the OCP 5.0 upgrade, `cluster-olm-operator` deploys the updated operator-controller
+During the upgrade, `cluster-olm-operator` deploys the updated operator-controller
 manifests:
 
 1. The new ClusterRoleBinding `operator-controller-cluster-admin-rolebinding` is created,
@@ -570,7 +636,7 @@ manifests:
 The ClusterRoleBinding was renamed (not updated in-place) because `roleRef` is
 [immutable in Kubernetes][k8s-rbac-crb].
 
-### Downgrading from OCP 5.0
+### Downgrading from the deprecation release
 
 OpenShift [does not support minor version downgrades][ocp-no-downgrade]. If somehow performed:
 - The `spec.serviceAccount` field remains in the API with `omitzero` serialization. An older
@@ -619,11 +685,11 @@ reconciliation success rate, time-to-install, or operator availability metrics.
 The removal of per-extension ContentManager caches reduces memory consumption, which may
 improve resource utilization SLIs.
 
-### Support Procedures
+## Support Procedures
 
 **Symptom:** User reports that `spec.serviceAccount` is no longer being used for
 reconciliation.
-**Diagnosis:** Expected behavior in OCP 5.0+. Check controller logs for the deprecation INFO
+**Diagnosis:** Expected behavior after the deprecation release. Check controller logs for the deprecation INFO
 message. Advise the user to clear the field from their ClusterExtension manifests.
 
 **Symptom:** User reports a kubectl warning about the deprecated serviceAccount field.
@@ -648,10 +714,8 @@ No new CI jobs, test clusters, or external services are required.
 
 <!-- Reference-style links -->
 [cluster-olm-operator]: https://github.com/openshift/cluster-olm-operator
-[operator-controller]: https://github.com/operator-framework/operator-controller
 [boxcutter]: https://github.com/operator-framework/boxcutter
 [openshift-docs]: https://github.com/openshift/openshift-docs/
-[openshift-api]: https://github.com/openshift/api
 [ocp-ce-permissions]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html-single/extensions/index#olmv1-cluster-extension-permissions_managing-ce
 [ocp-ce-required-rbac]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html-single/extensions/index#olmv1-required-rbac-to-install-and-manage-extension-resources_managing-ce
 [ocp-no-downgrade]: https://access.redhat.com/solutions/4777861
@@ -667,6 +731,4 @@ No new CI jobs, test clusters, or external services are required.
 [k8s-crd-deprecated-issue]: https://github.com/kubernetes/kubernetes/issues/131817
 [EP #1860]: https://github.com/openshift/enhancements/pull/1860
 [EP #1897]: https://github.com/openshift/enhancements/pull/1897
-[PR #2544]: https://github.com/operator-framework/operator-controller/pull/2544
-[PR #2770]: https://github.com/operator-framework/operator-controller/pull/2770
-[OPRUN-4634]: https://issues.redhat.com/browse/OPRUN-4634
+[OPRUN-4674]: https://issues.redhat.com/browse/OPRUN-4674
